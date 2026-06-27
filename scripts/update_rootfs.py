@@ -139,62 +139,73 @@ def update_readme(readme_path, new_version):
     except Exception as e:
         raise Exception(f"Failed to update {readme_path}: {str(e)}")
 
-
 def main():
     update_success = False
     try:
-        if not all(os.path.exists(f)
-                   for f in [INSTALLER_SCRIPT, STATUS_SCRIPT, README]):
+        if not all(os.path.exists(f) for f in [INSTALLER_SCRIPT, STATUS_SCRIPT, README]):
             raise FileNotFoundError(
-                f"One or more required files are missing: {INSTALLER_SCRIPT}, {STATUS_SCRIPT}, {README}".format())
+                f"One or more required files are missing: {INSTALLER_SCRIPT}, {STATUS_SCRIPT}, {README}")
+        
         print("[+] Fetching available versions...")
-        selected_version = None
         all_versions = fetch_all_versions()
         desired_version = sys.argv[1] if len(sys.argv) > 1 else None
+        
+        selected_version = None
+        latest_checksums = None
+
+        # যদি নির্দিষ্ট কোনো ভার্সন রিকোয়েস্ট করা হয়
         if desired_version:
             if desired_version in all_versions:
-                selected_version = desired_version
-                print(
-                    f"[+] Requested version '{desired_version}' is available.")
+                versions_to_try = [desired_version]
+                print(f"[+] Requested version '{desired_version}' is available.")
             else:
-                selected_version = all_versions[0]
-                print(
-                    f"[!] Requested version '{desired_version}' not found. Falling back to latest '{selected_version}'.")
+                versions_to_try = all_versions
+                print(f"[!] Requested version '{desired_version}' not found. Falling back to available list.")
         else:
-            selected_version = all_versions[0]
-            print(
-                f"[+] Upgrading to latest version '{selected_version}'.")
+            versions_to_try = all_versions
+
+        # লুপ চালিয়ে চেক করা হবে কোন ভার্সনটির SHA256SUMS সার্ভারে সচল আছে
+        for version in versions_to_try:
+            try:
+                print(f"[+] Trying to fetch checksums for version '{version}'...")
+                latest_checksums = fetch_latest_checksums(version)
+                selected_version = version
+                break # সফলভাবে checksums পেলে লুপ থেকে বের হয়ে যাবে
+            except Exception as e:
+                print(f"[!] Version '{version}' checksum fetch failed: {str(e)}. Trying next available...")
+
+        if not selected_version or not latest_checksums:
+            raise Exception("No valid Kali NetHunter versions with valid checksums could be resolved.")
+
         print("[+] Checking current script version...")
         current_version = get_current_version(INSTALLER_SCRIPT)
         print(f"[+] Current version: {current_version}")
         print(f"[+] Target version: {selected_version}")
+        
         if current_version == selected_version:
             print("[*] RootFS is already up-to-date.")
             update_success = True
             return
+            
         print("[!] Updating to new version...")
-        print("[+] Fetching latest checksums...")
-        latest_checksums = fetch_latest_checksums(selected_version)
         print("[+] Verifying rootfs archive links...")
         verify_rootfs_links(selected_version, latest_checksums)
+        
         print("[+] Updating installer script...")
         update_script(INSTALLER_SCRIPT, selected_version, latest_checksums)
+        
         print("[+] Updating README...")
         update_readme(README, selected_version)
         update_success = True
         print("[*] All files updated successfully.")
+        
     except Exception as e:
         print(f"[-] {e}")
     finally:
         if update_success:
-            update_status_json(
-                STATUS_SCRIPT,
-                f"Kali NetHunter ({selected_version}) Available")
+            update_status_json(STATUS_SCRIPT, f"Kali NetHunter ({selected_version}) Available")
         else:
             update_status_json(STATUS_SCRIPT, "Unavailable")
         if not update_success:
             sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
+            
